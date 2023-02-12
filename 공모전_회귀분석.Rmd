@@ -1,0 +1,241 @@
+---
+title: <span style="color:purple">Change:On Team</span>
+output:
+  html_document:
+    fig_height: 5
+    fig_width: 10
+    highlight: espresso
+    theme: journal
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+  pdf_document: 
+    fig_height: 6
+    fig_width: 10
+    toc: yes
+    highlight: zenburn
+    fig_caption: yes
+    latex_engine: xelatex
+    keep_tex: yes
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# 1. 회귀분석  
+
+### 1. 데이터로드 및 모델적합
+```{r}
+rm(list=ls())
+df <- read.csv("C:/Users/hoyong/Downloads/numeric.csv", fileEncoding = "euc-kr")
+Y <- df$총1인가구수
+```
+
+### 2. 정규성 및 선형성 확인
+```{r}
+qqnorm(Y)
+qqline(Y)
+shapiro.test(Y)
+library(car)
+lm <- lm(df$총1인가구수 ~., data = df)
+crPlots(lm)
+```
+y값 변수변환 필요성 있음, 월세, 영화관, 커피 변수변환 필요.  
+
+```{r}
+summary(car::powerTransform(Y))
+```
+p-value = 0.021843 < $\alpha$
+로그변환 유효.  
+
+For better interpretation, transform every variables with log-transformation.  
+
+### 3. 모델 적합
+```{r}
+lm <- lm(log(Y) ~ log(df$월세) + log(df$버스정류장수) + log(df$전세보증금)+ log(df$환승제외) + log(df$환승역+1)  + log(df$공원수) +log(df$영화관) + log(df$커피.음료) + log(df$범죄5대) + log(df$선호가게수), data = df)
+summary(lm)
+```
+전체 회귀식 p-value < $\alpha$, 적어도 하나이상의 계수가 0이아님, 즉 회귀식이 유의하다.  
+월세가 증가 할 수록 1인가구수가 증가한다고 나와 있으나 유의한 계수가 아니다. 다중공선성을 조금 의심하고 넘어간다.  
+
+$R^2_a$ = 0.7216 으로 설명력이 좋은편이다.
+
+### 4. 변수변환된 모델 선형성 확인
+```{r}
+crPlots(lm)
+```
+변수변환 이후 선형성이 훨씬 좋아졌음을 확인 할 수 있다.  
+
+# 2. 잔차검정  
+
+### 1. 잔차 정규성검정  
+
+$H_0$ : 잔차는 정규분포를 따른다.  
+$H_1$ : not $H_0$, $\alpha = 0.05$
+```{r}
+shapiro.test(lm$residuals)
+qqnorm(lm$residuals)
+qqline(lm$residuals)
+```
+p-value = 0.442 > $\alpha$, Accept $H_0$.  
+qq-plot, shapiro wilk 모두 잔차의 정규성 만족된다고 볼 충분한 근거가 존재.  
+
+
+### 2. 잔차 독립성 검정
+```{r}
+ri <- rstandard(lm)
+plot(ri, type='o')
+abline(h=0, lty=1, col='red')
+```
+residual, index plot 확인한 결과 -2, 2 사이 근방에서 랜덤하게 퍼져 있어  
+독립성 만족하지만 음의 자기상관이 의심 되어 추가적 검정 실시  
+
+### ACF 확인
+```{r}
+#acf
+rho_hat <- acf(lm$residuals,plot=FALSE)[1]
+rho_hat
+```
+$\hat{\rho}$ =  -0.153 , check if it has negative autocorrelation.  
+
+### DW-test
+```{r}
+library(lmtest)
+dwtest(lm, alternative = 'less')
+```
+p-value = 0.3122 > 0.05 ($\alpha$), Accept $H_0$.  
+결과를 종합한 결과 잔차의 독립성은 만족된다고 볼 수 있다.  
+
+
+### 3. 잔차의 등분산성 확인
+```{r}
+yi_hat <- predict(lm)
+residual <- rstandard(lm)
+plot(yi_hat, residual)
+```
+($\hat{y_i}, r_i$) plot 을 확인해본 결과 랜덤하여 잔차의 등분산성 가정이 성립 한다고 볼 수 있다.  
+
+# 3. 다중공선성 확인
+```{r}
+vif(lm)
+library(perturb)
+colldiag(lm, center = TRUE, scale = TRUE)
+```
+VIF 값으로 다중공선성 의심, Condition index = 3.074 < 15 이므로 다중공선성이 없다고 볼 수도 있지만 의심을 한다.  
+
+
+### 1. 독립변수 다중공선성 확인
+```{r}
+X_matrix <- data.frame(log(df$월세), log(df$버스정류장수), log(df$전세보증금),log(df$환승제외),log(df$환승역+1),log(df$공원수),log(df$영화관),log(df$커피.음료),log(df$범죄5대),log(df$선호가게수))
+M <- cor(X_matrix)
+library(corrplot)
+corrplot.mixed(M, lower="color",upper="number")
+```
+collinear 한 성질을 가진 columns들이 몇몇 보인다.
+
+# 4. 이상치 탐지  
+
+### 1. leverage point 확인
+
+```{r}
+p <- length(lm$coefficients)-1 ; n <- dim(df)[1]
+lev <- influence(lm)$hat
+reference_value <- 2*(p+1)/n
+plot(lev, main='Index plot of leverage Values', ylim= c(-3,3)) # Calculate high leverage and plot lines.
+abline(h = c(-reference_value, reference_value), lty=2, col = 'red')
+```
+high leverage point 없다고 볼 수 있다.  
+
+### 2. influential point 확인
+```{r}
+cooks.d <- cooks.distance(lm)
+plot(cooks.d)
+```
+7,9번 영향점으로 보임(종로구, 동대문구)  
+하지만 연구의 목적상 삭제하기 어렵기에 남겨두기로 한다.
+
+# 5. PCA Regression
+```{r}
+pca <- prcomp(X_matrix, center = TRUE, scale = TRUE)
+summary(pca)
+lm <- lm(log(Y) ~ pca$x[,1] + pca$x[,2] + pca$x[,3] + pca$x[,4] + pca$x[,5])
+summary(lm)
+```  
+주성분 5개로도 변동의 93%설명 가능하므로 주성분 5개 선택.  
+
+
+### 1. eigen matrix
+```{r}
+eigen_matrix <- pca$rotation
+
+co_1 <- c(); co_2 <- c(); co_3 <- c(); co_4 <- c(); co_5 <-c()
+for (i in 1:10){
+  co_1 <- c(co_1, eigen_matrix[i,1])
+  co_2 <- c(co_2, eigen_matrix[i,2])
+  co_3 <- c(co_3, eigen_matrix[i,3])
+  co_4 <- c(co_4, eigen_matrix[i,4])
+  co_5 <- c(co_5, eigen_matrix[i,5])
+}
+```
+$Y_t$ = $\gamma_0$ + $\alpha_1$(`r co_1[1]`$A^s_t$+ `r co_1[2]`$B^s_t$+ `r co_1[3]` $C^s_{t}$+ `r co_1[4]`$D^S_{t}$+ `r co_1[5]`$E^S_{t}$+ `r co_1[6]`$F^S_{t}$  
+$\qquad$$\qquad$$\;$+ `r co_1[7]` $G^S_{t}$+ `r co_1[8]`$H^S_{t}$+ 
+`r co_1[9]` $I^S_{t}$+ `r co_1[10]`$J^S_{t}$
+
+$\qquad$ $\;$ $\,$ + $\alpha_2$(`r co_2[1]`$A^s_t$ `r co_2[2]`$B^s_t$+ `r co_2[3]` $C^s_{t}$`r co_2[4]`$D^S_{t}$+ `r co_2[5]`$E^S_{t}$+ `r co_2[6]`$F^S_{t}$   $\qquad$$\qquad$$\;$   $\qquad$$\qquad$$\qquad$$\;$ `r co_2[7]` $G^S_{t}$ `r co_2[8]`$H^S_{t}$
++`r co_2[9]` $I^S_{t}$ `r co_2[10]`$J^S_{t}$  
+
+$\qquad$ $\;$ $\,$ + $\alpha_3$(`r co_3[1]`$A^s_t$ `r co_3[2]`$B^s_t$ `r co_3[3]`$C^s_{t}$ `r co_3[4]`$D^S_{t}$ `r co_3[5]`$E^S_{t}$+ `r co_3[6]`$F^S_{t}$   $\qquad$$\qquad$$\;$   $\qquad$$\qquad$$\qquad$$\;$
++`r co_3[7]`$G^S_{t}$ +`r co_3[8]`$H^S_{t}$
+ `r co_3[9]`$I^S_{t}$+ `r co_3[10]`$J^S_{t}$  
+
+$\qquad$ $\;$ $\,$ + $\alpha_4$(`r co_4[1]`$A^s_t$ `r co_4[2]`$B^s_t$ `r co_4[3]`$C^s_{t}$ + `r co_4[4]`$D^S_{t}$+ `r co_4[5]`$E^S_{t}$+ `r co_4[6]`$F^S_{t}$  $\qquad$$\qquad$$\qquad$$\qquad$$\qquad$$\;$
++ `r co_4[7]`$G^S_{t}$ `r co_4[8]`$H^S_{t}$
+ `r co_4[9]`$I^S_{t}$ `r co_4[10]`$J^S_{t}$  
+
+$\qquad$ $\;$ $\,$ + $\alpha_5$(`r co_5[1]`$A^s_t$+ `r co_5[2]`$B^s_t$+ `r co_5[3]`$C^s_{t}$ + `r co_5[4]`$D^S_{t}$ `r co_5[5]`$E^S_{t}$+ `r co_5[6]`$F^S_{t}$   $\qquad$$\qquad$$\qquad$$\qquad$$\qquad$$\;$`r co_5[7]`$G^S_{t}$ `r co_5[8]`$H^S_{t}$
+`r co_5[9]`$I^S_{t}$+ `r co_5[10]`$J^S_{t}$+ $\epsilon$\
+
+### 2. Calc Gamma
+```{r}
+calc_gamma <- function(k){sum <- 0
+for (i in 1:5){
+sum <- sum + (eigen_matrix[k,i]*summary(lm)$coefficient[i+1,1]
+)}
+return(sum)
+}
+coef_list <- c(calc_gamma(1), calc_gamma(2),calc_gamma(3), calc_gamma(4), calc_gamma(5), calc_gamma(6), calc_gamma(7), calc_gamma(8), calc_gamma(9), calc_gamma(10))
+x_mean <- apply(X_matrix, 2, mean)
+x_std <- apply(X_matrix, 2, sd)
+coef_list
+```
+$Y_t$ = `r summary(lm)$coefficient[1,1]`+ `r coef_list[1]`$A^S_t$+ `r coef_list[2]`$B^S_t$+ `r coef_list[3]`$C^S_{t}$+ `r coef_list[4]`$D^S_{t}$+ `r coef_list[5] `$E^S_{t}$+ `r coef_list[6]`$F^S_{t}$  
+$\qquad$ `r coef_list[7]`$G^S_{t}$+ `r coef_list[8]`$H^S_{t}$+ `r coef_list[9]`$I^S_{t}$ `r coef_list[10]`$J^S_{t}$ + $\epsilon$.  
+
+Transform standardized variables to Original variables.
+Using $\gamma_jX^S_{ij}$ = $\gamma_jX_{ij}\over s_j$-$\gamma_j\bar{X_{j}}\over s_j$, where $X^S_{ij}$ = $X_{ij}-\bar{X_{j}}\over s_j$.
+
+```{r}
+adj_coef <- c()
+coef_slope <- c() # gamma divide by std of x_j
+for(i in 1:10){
+  coef_slope <- c(coef_slope, coef_list[i]/x_std[i])
+  adj_coef <- c(adj_coef, -coef_slope[i]*x_mean[i])
+}
+coef_slope
+```
+### 3. 원변수 변환
+```{r}
+intercept <- lm$coefficient[1] + sum(adj_coef)
+intercept
+```
+$Y_t$ = `r intercept`+ `r coef_slope[1]`$A_t$+ `r coef_slope[2]`$B_t$+ `r coef_slope[3]`$C_{t}$+ `r coef_slope[4]`$D_{t}$+ `r coef_slope[5]`$E_{t}$  
+$\qquad$+ `r coef_slope[6] `$F_{t}$
+`r coef_slope[7]`$G_{t}$+ `r coef_slope[8]`$H_{t}$+ `r coef_slope[9]`$I_{t}$ `r coef_slope[10]`$J_{t}$ +
+$\epsilon$.
+
+
